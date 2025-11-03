@@ -120,37 +120,64 @@
   }
 }
 
+@layer utilities {
+  .font-mindra {
+    font-family: var(--font-instrument-serif), serif;
+  }
+  
+  .overflow-wrap-anywhere {
+    overflow-wrap: anywhere;
+  }
+  
+  .wrap-break-word {
+    word-wrap: break-word;
+    word-break: break-word;
+  }
+}
+
 /* Markdown Report Styling */
 .prose {
   @apply text-foreground;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
 }
 
 .prose h1 {
   @apply text-3xl font-bold mb-4 pb-2 border-b;
+  word-break: break-word;
 }
 
 .prose h2 {
   @apply text-2xl font-semibold mt-8 mb-4;
+  word-break: break-word;
 }
 
 .prose h3 {
   @apply text-xl font-semibold mt-6 mb-3;
+  word-break: break-word;
 }
 
 .prose p {
   @apply mb-4 leading-relaxed;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .prose code {
   @apply bg-muted px-1.5 py-0.5 rounded text-sm font-mono;
+  word-break: break-all;
+  white-space: pre-wrap;
 }
 
 .prose pre {
   @apply bg-muted p-4 rounded-lg overflow-x-auto my-4;
+  max-width: 100%;
 }
 
 .prose pre code {
   @apply bg-transparent p-0;
+  white-space: pre;
+  word-break: normal;
 }
 
 .prose ul, .prose ol {
@@ -159,10 +186,12 @@
 
 .prose li {
   @apply mb-2;
+  word-break: break-word;
 }
 
 .prose strong {
   @apply font-semibold text-foreground;
+  word-break: break-word;
 }
 
 .prose hr {
@@ -171,4 +200,5 @@
 
 .prose blockquote {
   @apply border-l-4 border-primary pl-4 italic my-4;
+  word-break: break-word;
 }

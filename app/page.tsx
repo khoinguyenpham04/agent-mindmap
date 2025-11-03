@@ -64,6 +64,10 @@ import {
   IconChevronUp,
   IconFileText,
   IconX,
+  IconDeviceFloppy,
+  IconFolderOpen,
+  IconBrandOpenai,
+  IconSparkles,
 } from '@tabler/icons-react';
 
 interface NodeData {
@@ -150,6 +154,14 @@ export default function Home() {
   const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set());
   const [showReport, setShowReport] = useState(false);
   const [executionReport, setExecutionReport] = useState<string>('');
+
+  // Save/Load workflow state
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const [showLoadDialog, setShowLoadDialog] = useState(false);
+  const [workflowName, setWorkflowName] = useState('');
+  const [workflowDescription, setWorkflowDescription] = useState('');
+  const [currentWorkflowId, setCurrentWorkflowId] = useState<number | null>(null);
+  const [savedWorkflows, setSavedWorkflows] = useState<any[]>([]);
 
   const nodeTypes = {
     workflow: ({
@@ -558,6 +570,108 @@ export default function Home() {
     );
   };
 
+  // Save/Load workflow functions
+  const fetchWorkflows = async () => {
+    try {
+      const response = await fetch('/api/workflows');
+      if (response.ok) {
+        const data = await response.json();
+        setSavedWorkflows(data.workflows);
+      }
+    } catch (error) {
+      console.error('Error fetching workflows:', error);
+    }
+  };
+
+  const handleSaveWorkflow = async () => {
+    if (!workflowName.trim()) {
+      setChatHistory(prev => [
+        ...prev,
+        { type: 'assistant', content: '⚠️ Please enter a workflow name' },
+      ]);
+      return;
+    }
+
+    if (nodes.length === 0) {
+      setChatHistory(prev => [
+        ...prev,
+        { type: 'assistant', content: '⚠️ No workflow to save. Generate a workflow first!' },
+      ]);
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/workflows', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: currentWorkflowId,
+          name: workflowName,
+          description: workflowDescription,
+          nodes,
+          edges,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setCurrentWorkflowId(data.id);
+        setShowSaveDialog(false);
+        setChatHistory(prev => [
+          ...prev,
+          {
+            type: 'assistant',
+            content: `💾 Workflow "${workflowName}" saved successfully!`,
+          },
+        ]);
+        await fetchWorkflows();
+      }
+    } catch (error) {
+      console.error('Error saving workflow:', error);
+      setChatHistory(prev => [
+        ...prev,
+        { type: 'assistant', content: '❌ Failed to save workflow' },
+      ]);
+    }
+  };
+
+  const handleLoadWorkflow = async (workflow: any) => {
+    setNodes(workflow.nodes);
+    setEdges(workflow.edges);
+    setWorkflowName(workflow.name);
+    setWorkflowDescription(workflow.description || '');
+    setCurrentWorkflowId(workflow.id);
+    setShowLoadDialog(false);
+    setChatHistory(prev => [
+      ...prev,
+      {
+        type: 'assistant',
+        content: `📂 Loaded workflow "${workflow.name}"`,
+      },
+    ]);
+  };
+
+  const handleDeleteWorkflow = async (id: number, name: string) => {
+    try {
+      const response = await fetch(`/api/workflows?id=${id}`, {
+        method: 'DELETE',
+      });
+
+      if (response.ok) {
+        setChatHistory(prev => [
+          ...prev,
+          {
+            type: 'assistant',
+            content: `🗑️ Deleted workflow "${name}"`,
+          },
+        ]);
+        await fetchWorkflows();
+      }
+    } catch (error) {
+      console.error('Error deleting workflow:', error);
+    }
+  };
+
   // Generate markdown report from execution state
   const generateExecutionReport = (state: ExecutionState, input: string): string => {
     const timestamp = new Date().toLocaleString();
@@ -746,31 +860,71 @@ export default function Home() {
         {/* Header */}
         <div className="border-b p-3 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <IconBrain className="h-6 w-6 text-primary" stroke={1.5} />
-            <h1 className="text-lg font-semibold">Mindra</h1>
+            <IconSparkles className="h-6 w-6 text-primary" stroke={1.5} />
+            <div>
+              <h1 className="text-lg font-semibold font-mindra">
+                Mindra
+              </h1>
+              {currentWorkflowId && workflowName && (
+                <p className="text-xs text-muted-foreground">
+                  {workflowName}
+                </p>
+              )}
+            </div>
           </div>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              setNodes([]);
-              setEdges([]);
-              setChatHistory([]);
-              setExecutionState(null);
-            }}
-          >
-            <IconTrash className="h-4 w-4 mr-1" stroke={1.5} />
-            Clear All
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setShowSaveDialog(true);
+                if (!workflowName && currentWorkflowId === null) {
+                  setWorkflowName('');
+                  setWorkflowDescription('');
+                }
+              }}
+              disabled={nodes.length === 0}
+            >
+              <IconDeviceFloppy className="h-4 w-4 mr-1" stroke={1.5} />
+              Save
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setShowLoadDialog(true);
+                fetchWorkflows();
+              }}
+            >
+              <IconFolderOpen className="h-4 w-4 mr-1" stroke={1.5} />
+              Load
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setNodes([]);
+                setEdges([]);
+                setChatHistory([]);
+                setExecutionState(null);
+                setCurrentWorkflowId(null);
+                setWorkflowName('');
+                setWorkflowDescription('');
+              }}
+            >
+              <IconTrash className="h-4 w-4 mr-1" stroke={1.5} />
+              Clear
+            </Button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {chatHistory.length === 0 ? (
             <div className="text-center font-semibold mt-8">
               <div className="flex justify-center mb-4">
-                <IconBrain className="h-16 w-16 text-primary" stroke={1.5} />
+                <IconSparkles className="h-16 w-16 text-primary" stroke={1.5} />
               </div>
-              <p className="text-3xl mt-4">
+              <p className="text-3xl mt-4 font-mindra">
                 What AI agent would you like to build?
               </p>
               <p className="text-muted-foreground text-base mt-4 font-normal flex items-center justify-center gap-2">
@@ -882,7 +1036,7 @@ export default function Home() {
                             {step.input && (
                               <div className="text-xs">
                                 <div className="font-medium text-muted-foreground mb-1">Input:</div>
-                                <div className="bg-muted/50 p-2 rounded text-xs">
+                                <div className="bg-muted/50 p-2 rounded text-xs break-words overflow-wrap-anywhere">
                                   {step.input.substring(0, 200)}
                                   {step.input.length > 200 ? '...' : ''}
                                 </div>
@@ -891,7 +1045,7 @@ export default function Home() {
                             {step.output && (
                               <div className="text-xs">
                                 <div className="font-medium text-muted-foreground mb-1">Output:</div>
-                                <div className="bg-muted/50 p-2 rounded text-xs">
+                                <div className="bg-muted/50 p-2 rounded text-xs break-words overflow-wrap-anywhere max-h-[150px] overflow-y-auto">
                                   {step.output}
                                 </div>
                               </div>
@@ -900,12 +1054,12 @@ export default function Home() {
                               <div className="text-xs">
                                 <div className="font-medium text-muted-foreground mb-1">Tools Used:</div>
                                 {step.toolCalls.map((tool, i) => (
-                                  <div key={i} className="bg-blue-50 dark:bg-blue-950/20 p-2 rounded mb-1">
-                                    <div className="font-medium text-blue-600 dark:text-blue-400">
+                                  <div key={i} className="bg-blue-50 dark:bg-blue-950/20 p-2 rounded mb-1 break-words">
+                                    <div className="font-medium text-blue-600 dark:text-blue-400 truncate">
                                       🔧 {tool.name}
                                     </div>
                                     {tool.result && (
-                                      <div className="text-[10px] mt-1 text-muted-foreground">
+                                      <div className="text-[10px] mt-1 text-muted-foreground break-all overflow-hidden">
                                         {JSON.stringify(tool.result).substring(0, 150)}...
                                       </div>
                                     )}
@@ -1171,8 +1325,8 @@ export default function Home() {
 
       {/* Edit Node Dialog */}
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-        <DialogContent className="sm:max-w-[525px]">
-          <DialogHeader>
+        <DialogContent className="sm:max-w-[600px] max-h-[90vh] flex flex-col">
+          <DialogHeader className="flex-shrink-0">
             <DialogTitle className="flex items-center gap-2">
               <IconEdit className="h-5 w-5" stroke={1.5} />
               Edit Node
@@ -1181,54 +1335,60 @@ export default function Home() {
               Modify the properties of this workflow node.
             </DialogDescription>
           </DialogHeader>
-          <div className="grid gap-4 py-4">
-            <div className="grid gap-2">
-              <label htmlFor="label" className="text-sm font-medium">
-                Node Label
-              </label>
-              <Input
-                id="label"
-                value={editForm.label}
-                onChange={(e) => setEditForm(prev => ({ ...prev, label: e.target.value }))}
-                placeholder="e.g., Data Processing"
-              />
-            </div>
-            <div className="grid gap-2">
-              <label htmlFor="description" className="text-sm font-medium">
-                Description
-              </label>
-              <Input
-                id="description"
-                value={editForm.description}
-                onChange={(e) => setEditForm(prev => ({ ...prev, description: e.target.value }))}
-                placeholder="e.g., Processes incoming data"
-              />
-            </div>
-            <div className="grid gap-2">
-              <label htmlFor="content" className="text-sm font-medium">
-                Content
-              </label>
-              <Textarea
-                id="content"
-                value={editForm.content}
-                onChange={(e) => setEditForm(prev => ({ ...prev, content: e.target.value }))}
-                placeholder="Detailed explanation of what this node does..."
-                rows={4}
-              />
-            </div>
-            <div className="grid gap-2">
-              <label htmlFor="footer" className="text-sm font-medium">
-                Footer
-              </label>
-              <Input
-                id="footer"
-                value={editForm.footer}
-                onChange={(e) => setEditForm(prev => ({ ...prev, footer: e.target.value }))}
-                placeholder="e.g., AI Model: GPT-4"
-              />
+          <div className="flex-1 overflow-y-auto">
+            <div className="grid gap-4 py-4 px-1">
+              <div className="grid gap-2">
+                <label htmlFor="label" className="text-sm font-medium">
+                  Node Label
+                </label>
+                <Input
+                  id="label"
+                  value={editForm.label}
+                  onChange={(e) => setEditForm(prev => ({ ...prev, label: e.target.value }))}
+                  placeholder="e.g., Data Processing"
+                  className="w-full"
+                />
+              </div>
+              <div className="grid gap-2">
+                <label htmlFor="description" className="text-sm font-medium">
+                  Description
+                </label>
+                <Input
+                  id="description"
+                  value={editForm.description}
+                  onChange={(e) => setEditForm(prev => ({ ...prev, description: e.target.value }))}
+                  placeholder="e.g., Processes incoming data"
+                  className="w-full"
+                />
+              </div>
+              <div className="grid gap-2">
+                <label htmlFor="content" className="text-sm font-medium">
+                  Content
+                </label>
+                <Textarea
+                  id="content"
+                  value={editForm.content}
+                  onChange={(e) => setEditForm(prev => ({ ...prev, content: e.target.value }))}
+                  placeholder="Detailed explanation of what this node does..."
+                  rows={5}
+                  className="w-full resize-none"
+                />
+              </div>
+              <div className="grid gap-2">
+                <label htmlFor="footer" className="text-sm font-medium">
+                  Footer
+                </label>
+                <Input
+                  id="footer"
+                  value={editForm.footer}
+                  onChange={(e) => setEditForm(prev => ({ ...prev, footer: e.target.value }))}
+                  placeholder="e.g., AI Model: GPT-4"
+                  className="w-full"
+                />
+              </div>
             </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="flex-shrink-0">
             <Button 
               variant="outline" 
               onClick={() => setIsEditDialogOpen(false)}
@@ -1245,13 +1405,13 @@ export default function Home() {
 
       {/* Execution Report Modal */}
       <Dialog open={showReport} onOpenChange={setShowReport}>
-        <DialogContent className="sm:max-w-[900px] max-h-[85vh]">
-          <DialogHeader>
-            <DialogTitle className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
+        <DialogContent className="sm:max-w-[900px] max-h-[90vh] flex flex-col">
+          <DialogHeader className="flex-shrink-0">
+            <div className="flex items-center justify-between">
+              <DialogTitle className="flex items-center gap-2">
                 <IconFileText className="h-5 w-5" stroke={1.5} />
                 Execution Report
-              </div>
+              </DialogTitle>
               <Button 
                 variant="ghost" 
                 size="sm"
@@ -1269,21 +1429,169 @@ export default function Home() {
                 <IconDownload className="h-4 w-4 mr-1" stroke={1.5} />
                 Copy Markdown
               </Button>
-            </DialogTitle>
+            </div>
             <DialogDescription>
               Comprehensive execution report with all steps, outputs, and tool usage
             </DialogDescription>
           </DialogHeader>
-          <ScrollArea className="h-[calc(85vh-140px)] pr-4">
-            <div className="prose prose-sm dark:prose-invert max-w-none">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {executionReport}
-              </ReactMarkdown>
-            </div>
-          </ScrollArea>
-          <DialogFooter>
+          <div className="flex-1 overflow-hidden">
+            <ScrollArea className="h-full pr-4">
+              <div className="prose prose-sm dark:prose-invert max-w-none break-words">
+                <ReactMarkdown 
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    code: ({ node, inline, className, children, ...props }: any) => {
+                      return inline ? (
+                        <code className="bg-muted px-1.5 py-0.5 rounded text-sm font-mono break-all" {...props}>
+                          {children}
+                        </code>
+                      ) : (
+                        <pre className="overflow-x-auto">
+                          <code className={className} {...props}>
+                            {children}
+                          </code>
+                        </pre>
+                      );
+                    },
+                    p: ({ children }) => (
+                      <p className="break-words overflow-wrap-anywhere">{children}</p>
+                    ),
+                  }}
+                >
+                  {executionReport}
+                </ReactMarkdown>
+              </div>
+            </ScrollArea>
+          </div>
+          <DialogFooter className="flex-shrink-0">
             <Button variant="outline" onClick={() => setShowReport(false)}>
               <IconX className="h-4 w-4 mr-1" stroke={1.5} />
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Save Workflow Dialog */}
+      <Dialog open={showSaveDialog} onOpenChange={setShowSaveDialog}>
+        <DialogContent className="sm:max-w-[550px] max-h-[90vh] flex flex-col">
+          <DialogHeader className="flex-shrink-0">
+            <DialogTitle className="flex items-center gap-2">
+              <IconDeviceFloppy className="h-5 w-5" stroke={1.5} />
+              {currentWorkflowId ? 'Update Workflow' : 'Save Workflow'}
+            </DialogTitle>
+            <DialogDescription>
+              Save your workflow to load it later or share with others
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex-1 overflow-y-auto">
+            <div className="grid gap-4 py-4 px-1">
+              <div className="grid gap-2">
+                <label htmlFor="workflow-name" className="text-sm font-medium">
+                  Workflow Name *
+                </label>
+                <Input
+                  id="workflow-name"
+                  value={workflowName}
+                  onChange={(e) => setWorkflowName(e.target.value)}
+                  placeholder="e.g., Customer Support Agent v1"
+                  autoFocus
+                  className="w-full"
+                />
+              </div>
+              <div className="grid gap-2">
+                <label htmlFor="workflow-description" className="text-sm font-medium">
+                  Description (optional)
+                </label>
+                <Textarea
+                  id="workflow-description"
+                  value={workflowDescription}
+                  onChange={(e) => setWorkflowDescription(e.target.value)}
+                  placeholder="Brief description of what this workflow does..."
+                  rows={3}
+                  className="w-full resize-none"
+                />
+              </div>
+              <div className="text-xs text-muted-foreground bg-muted/50 p-3 rounded break-words">
+                📊 This workflow has {nodes.length} nodes and {edges.length} connections
+              </div>
+            </div>
+          </div>
+          <DialogFooter className="flex-shrink-0">
+            <Button variant="outline" onClick={() => setShowSaveDialog(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleSaveWorkflow} disabled={!workflowName.trim()}>
+              <IconDeviceFloppy className="h-4 w-4 mr-1" stroke={1.5} />
+              {currentWorkflowId ? 'Update' : 'Save'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Load Workflow Dialog */}
+      <Dialog open={showLoadDialog} onOpenChange={setShowLoadDialog}>
+        <DialogContent className="sm:max-w-[700px] max-h-[90vh] flex flex-col">
+          <DialogHeader className="flex-shrink-0">
+            <DialogTitle className="flex items-center gap-2">
+              <IconFolderOpen className="h-5 w-5" stroke={1.5} />
+              Load Workflow
+            </DialogTitle>
+            <DialogDescription>
+              Select a saved workflow to load onto the canvas
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex-1 overflow-hidden">
+            <ScrollArea className="h-full">
+              {savedWorkflows.length === 0 ? (
+                <div className="text-center py-12 text-muted-foreground">
+                  <IconFolderOpen className="h-12 w-12 mx-auto mb-3 opacity-50" stroke={1.5} />
+                  <p>No saved workflows yet</p>
+                  <p className="text-xs mt-2">Create and save a workflow to see it here</p>
+                </div>
+              ) : (
+                <div className="space-y-2 pr-4">
+                  {savedWorkflows.map((workflow) => (
+                    <Card
+                      key={workflow.id}
+                      className="p-4 hover:bg-muted/50 cursor-pointer transition-colors"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1 min-w-0" onClick={() => handleLoadWorkflow(workflow)}>
+                          <h3 className="font-semibold text-sm mb-1 truncate">{workflow.name}</h3>
+                          {workflow.description && (
+                            <p className="text-xs text-muted-foreground mb-2 line-clamp-2">
+                              {workflow.description}
+                            </p>
+                          )}
+                          <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+                            <span>📊 {workflow.nodes.length} nodes</span>
+                            <span>🔗 {workflow.edges.length} edges</span>
+                            <span>📅 {new Date(workflow.created_at).toLocaleDateString()}</span>
+                          </div>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="flex-shrink-0"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (confirm(`Delete workflow "${workflow.name}"?`)) {
+                              handleDeleteWorkflow(workflow.id, workflow.name);
+                            }
+                          }}
+                        >
+                          <IconTrash className="h-4 w-4" stroke={1.5} />
+                        </Button>
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </ScrollArea>
+          </div>
+          <DialogFooter className="flex-shrink-0">
+            <Button variant="outline" onClick={() => setShowLoadDialog(false)}>
               Close
             </Button>
           </DialogFooter>
