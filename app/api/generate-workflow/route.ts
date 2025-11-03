@@ -131,7 +131,11 @@ export async function POST(request: NextRequest) {
   try {
     const { message, currentNodes, currentEdges } = await request.json();
 
+    console.log('=== Workflow Generation Request ===');
+    console.log('Message:', message);
+
     if (!message) {
+      console.error('Error: No message provided');
       return NextResponse.json(
         { error: 'Message is required' },
         { status: 400 },
@@ -139,9 +143,12 @@ export async function POST(request: NextRequest) {
     }
 
     const apiKey = process.env.OPENAI_API_KEY;
+    console.log('API Key configured:', !!apiKey);
+    
     if (!apiKey) {
+      console.error('Error: OpenAI API key not configured');
       return NextResponse.json(
-        { error: 'OpenAI API key not configured. Please add OPENAI_API_KEY to your .env.local file' },
+        { error: 'OpenAI API key not configured. Please add OPENAI_API_KEY to your .env.local file and restart the server.' },
         { status: 500 },
       );
     }
@@ -175,22 +182,38 @@ Return ONLY the JSON response, no other text.`;
 
     console.log('Generating workflow with LLM...');
 
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [
-        { role: 'system', content: WORKFLOW_SYSTEM_PROMPT },
-        { role: 'user', content: userPrompt },
-      ],
-      temperature: 0.7,
-      response_format: { type: 'json_object' },
-    });
+    let response;
+    try {
+      response = await openai.chat.completions.create({
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: WORKFLOW_SYSTEM_PROMPT },
+          { role: 'user', content: userPrompt },
+        ],
+        temperature: 0.7,
+        response_format: { type: 'json_object' },
+      });
+    } catch (openaiError: any) {
+      console.error('OpenAI API Error:', openaiError);
+      const errorMessage = openaiError.message || 'Unknown OpenAI error';
+      
+      if (errorMessage.includes('quota') || errorMessage.includes('insufficient_quota')) {
+        throw new Error('OpenAI API quota exceeded. Please check your credits at https://platform.openai.com/usage');
+      } else if (errorMessage.includes('api_key') || errorMessage.includes('Incorrect API key')) {
+        throw new Error('Invalid OpenAI API key. Please check your OPENAI_API_KEY in .env.local');
+      } else if (errorMessage.includes('model')) {
+        throw new Error('Invalid model specified. Using gpt-4o-mini.');
+      } else {
+        throw new Error(`OpenAI API error: ${errorMessage}`);
+      }
+    }
 
     const content = response.choices[0].message.content;
     if (!content) {
       throw new Error('No response from LLM');
     }
 
-    console.log('LLM Response:', content);
+    console.log('✓ LLM Response received');
 
     const workflow: WorkflowResponse = JSON.parse(content);
 

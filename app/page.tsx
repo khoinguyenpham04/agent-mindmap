@@ -33,6 +33,28 @@ import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Input } from '@/components/ui/input';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Textarea } from '@/components/ui/textarea';
+import {
+  IconBrain,
+  IconTrash,
+  IconDownload,
+  IconPhoto,
+  IconPlayerPlay,
+  IconNetwork,
+  IconMessageCircle,
+  IconGitBranch,
+  IconBolt,
+  IconEdit,
+  IconPlus,
+} from '@tabler/icons-react';
 
 interface NodeData {
   id: string;
@@ -97,10 +119,22 @@ export default function Home() {
   const [executionState, setExecutionState] = useState<ExecutionState | null>(null);
   const [executionInput, setExecutionInput] = useState('');
 
+  // Node editing state
+  const [editingNode, setEditingNode] = useState<NodeData | null>(null);
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [editForm, setEditForm] = useState({
+    label: '',
+    description: '',
+    content: '',
+    footer: '',
+  });
+
   const nodeTypes = {
     workflow: ({
+      id,
       data,
     }: {
+      id: string;
       data: {
         label: string;
         description: string;
@@ -154,10 +188,20 @@ export default function Home() {
             <p className="text-muted-foreground text-xs">{data.footer}</p>
           </NodeFooter>
           <Toolbar>
-            <Button size="sm" variant="ghost">
+            <Button 
+              size="sm" 
+              variant="ghost"
+              onClick={() => handleEditNode(id)}
+            >
+              <IconEdit className="h-3 w-3 mr-1" stroke={1.5} />
               Edit
             </Button>
-            <Button size="sm" variant="ghost">
+            <Button 
+              size="sm" 
+              variant="ghost"
+              onClick={() => handleDeleteNode(id)}
+            >
+              <IconTrash className="h-3 w-3 mr-1" stroke={1.5} />
               Delete
             </Button>
           </Toolbar>
@@ -196,12 +240,18 @@ export default function Home() {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to generate workflow');
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+        throw new Error(errorData.error || errorData.details || 'Failed to generate workflow');
       }
 
       const data = await response.json();
+      
+      if (!data.nodes || !Array.isArray(data.nodes)) {
+        throw new Error('Invalid workflow data received');
+      }
+      
       setNodes(data.nodes);
-      setEdges(data.edges);
+      setEdges(data.edges || []);
       setChatHistory((prev) => [
         ...prev,
         {
@@ -211,17 +261,160 @@ export default function Home() {
       ]);
     } catch (error) {
       console.error('Error:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      
+      let userMessage = 'Sorry, there was an error generating the workflow.';
+      
+      if (errorMessage.includes('API key not configured')) {
+        userMessage = '⚠️ OpenAI API key not configured. Please add your OPENAI_API_KEY to the .env.local file and restart the server.';
+      } else if (errorMessage.includes('quota')) {
+        userMessage = '⚠️ OpenAI API quota exceeded. Please check your API key credits.';
+      } else {
+        userMessage = `⚠️ Error: ${errorMessage}`;
+      }
+      
       setChatHistory((prev) => [
         ...prev,
         {
           type: 'assistant',
-          content:
-            'Sorry, there was an error generating the workflow. Please try again.',
+          content: userMessage,
         },
       ]);
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // Node management functions
+  const handleEditNode = (nodeId: string) => {
+    const node = nodes.find(n => n.id === nodeId);
+    if (!node) return;
+
+    setEditingNode(node);
+    setEditForm({
+      label: node.data.label,
+      description: node.data.description,
+      content: node.data.content,
+      footer: node.data.footer,
+    });
+    setIsEditDialogOpen(true);
+  };
+
+  const handleSaveEdit = () => {
+    if (!editingNode) return;
+
+    setNodes(prevNodes =>
+      prevNodes.map(node =>
+        node.id === editingNode.id
+          ? {
+              ...node,
+              data: {
+                ...node.data,
+                label: editForm.label,
+                description: editForm.description,
+                content: editForm.content,
+                footer: editForm.footer,
+              },
+            }
+          : node
+      )
+    );
+
+    setIsEditDialogOpen(false);
+    setEditingNode(null);
+    
+    setChatHistory(prev => [
+      ...prev,
+      {
+        type: 'assistant',
+        content: `✏️ Updated node: "${editForm.label}"`,
+      },
+    ]);
+  };
+
+  const handleDeleteNode = (nodeId: string) => {
+    const nodeToDelete = nodes.find(n => n.id === nodeId);
+    if (!nodeToDelete) return;
+
+    // Find edges connected to this node
+    const incomingEdges = edges.filter(e => e.target === nodeId);
+    const outgoingEdges = edges.filter(e => e.source === nodeId);
+
+    // Remove the node
+    setNodes(prevNodes => prevNodes.filter(n => n.id !== nodeId));
+
+    // Intelligent edge reconnection
+    const newEdges = edges.filter(e => e.source !== nodeId && e.target !== nodeId);
+    
+    // If node has both incoming and outgoing edges, reconnect them
+    if (incomingEdges.length > 0 && outgoingEdges.length > 0) {
+      incomingEdges.forEach(inEdge => {
+        outgoingEdges.forEach(outEdge => {
+          newEdges.push({
+            id: `reconnect_${inEdge.source}_${outEdge.target}`,
+            source: inEdge.source,
+            target: outEdge.target,
+            type: inEdge.type,
+          });
+        });
+      });
+    }
+
+    setEdges(newEdges);
+    
+    setChatHistory(prev => [
+      ...prev,
+      {
+        type: 'assistant',
+        content: `🗑️ Deleted node: "${nodeToDelete.data.label}"${
+          incomingEdges.length > 0 && outgoingEdges.length > 0
+            ? ' and reconnected edges'
+            : ''
+        }`,
+      },
+    ]);
+  };
+
+  const handleAddNode = () => {
+    const newNode: NodeData = {
+      id: `custom_${Date.now()}`,
+      type: 'workflow',
+      position: { 
+        x: nodes.length > 0 ? Math.max(...nodes.map(n => n.position.x)) + 450 : 0,
+        y: 0 
+      },
+      data: {
+        label: 'New Node',
+        description: 'Custom step',
+        handles: { target: true, source: true },
+        content: 'Add your custom logic here',
+        footer: 'Custom node',
+      },
+    };
+
+    setNodes(prev => [...prev, newNode]);
+    
+    // Auto-connect to last node if exists
+    if (nodes.length > 0) {
+      const lastNode = nodes[nodes.length - 1];
+      setEdges(prev => [
+        ...prev,
+        {
+          id: `edge_${lastNode.id}_${newNode.id}`,
+          source: lastNode.id,
+          target: newNode.id,
+          type: 'animated',
+        },
+      ]);
+    }
+    
+    setChatHistory(prev => [
+      ...prev,
+      {
+        type: 'assistant',
+        content: '➕ Added new custom node to workflow',
+      },
+    ]);
   };
 
   const executeAgent = async () => {
@@ -317,7 +510,10 @@ export default function Home() {
       <div className="w-1/2 flex flex-col border-r">
         {/* Header */}
         <div className="border-b p-3 h-14 flex items-center justify-between">
-          <h1 className="text-lg font-semibold">AI Agent Mind Map</h1>
+          <div className="flex items-center gap-2">
+            <IconBrain className="h-6 w-6 text-primary" stroke={1.5} />
+            <h1 className="text-lg font-semibold">Mindra</h1>
+          </div>
           <Button
             size="sm"
             variant="outline"
@@ -328,6 +524,7 @@ export default function Home() {
               setExecutionState(null);
             }}
           >
+            <IconTrash className="h-4 w-4 mr-1" stroke={1.5} />
             Clear All
           </Button>
         </div>
@@ -335,10 +532,14 @@ export default function Home() {
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {chatHistory.length === 0 ? (
             <div className="text-center font-semibold mt-8">
+              <div className="flex justify-center mb-4">
+                <IconBrain className="h-16 w-16 text-primary" stroke={1.5} />
+              </div>
               <p className="text-3xl mt-4">
                 What AI agent would you like to build?
               </p>
-              <p className="text-muted-foreground text-base mt-4 font-normal">
+              <p className="text-muted-foreground text-base mt-4 font-normal flex items-center justify-center gap-2">
+                <IconMessageCircle className="h-4 w-4" stroke={1.5} />
                 Describe your AI agent workflow and I'll help you visualize it
               </p>
             </div>
@@ -372,6 +573,7 @@ export default function Home() {
           {executionState && executionState.steps.length > 0 && (
             <Card className="p-4">
               <h3 className="font-semibold mb-3 flex items-center gap-2">
+                <IconGitBranch className="h-4 w-4" stroke={1.5} />
                 <span>Execution Steps</span>
                 {isExecuting && <Loader />}
               </h3>
@@ -471,13 +673,26 @@ export default function Home() {
       {/* Canvas Panel */}
       <div className="w-1/2 flex flex-col">
         <div className="border-b p-3 h-14 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">Workflow Visualization</h2>
+          <div className="flex items-center gap-2">
+            <IconNetwork className="h-5 w-5 text-primary" stroke={1.5} />
+            <h2 className="text-lg font-semibold">Workflow Canvas</h2>
+          </div>
           <div className="flex gap-2">
-            <Button size="sm" variant="outline">
-              Export JSON
+            <Button 
+              size="sm" 
+              variant="default"
+              onClick={handleAddNode}
+            >
+              <IconPlus className="h-4 w-4 mr-1" stroke={1.5} />
+              Add Node
             </Button>
             <Button size="sm" variant="outline">
-              Export Image
+              <IconDownload className="h-4 w-4 mr-1" stroke={1.5} />
+              JSON
+            </Button>
+            <Button size="sm" variant="outline">
+              <IconPhoto className="h-4 w-4 mr-1" stroke={1.5} />
+              Image
             </Button>
           </div>
         </div>
@@ -508,7 +723,10 @@ export default function Home() {
                     <Loader /> Running...
                   </>
                 ) : (
-                  '▶️ Execute Agent'
+                  <>
+                    <IconPlayerPlay className="h-4 w-4 mr-1" stroke={1.5} />
+                    Execute Agent
+                  </>
                 )}
               </Button>
             </div>
@@ -529,8 +747,10 @@ export default function Home() {
           {nodes.length === 0 ? (
             <div className="absolute inset-0 flex items-center justify-center text-muted-foreground">
               <div className="text-center">
+                <IconNetwork className="h-12 w-12 mx-auto mb-4 opacity-50" stroke={1.5} />
                 <p className="text-lg">Your workflow will appear here</p>
-                <p className="text-sm mt-2">
+                <p className="text-sm mt-2 flex items-center justify-center gap-1">
+                  <IconMessageCircle className="h-3 w-3" stroke={1.5} />
                   Start by describing your AI agent in the chat
                 </p>
               </div>
@@ -549,8 +769,11 @@ export default function Home() {
             >
               <Controls />
               <Panel position="top-left">
-                <div className="bg-card border rounded-lg p-2 text-xs space-y-1">
-                  <div className="font-semibold">Legend</div>
+                <div className="bg-card border rounded-lg p-2 text-xs space-y-1 shadow-sm">
+                  <div className="font-semibold flex items-center gap-1">
+                    <IconBolt className="h-3 w-3" stroke={1.5} />
+                    Legend
+                  </div>
                   <div className="flex items-center gap-2">
                     <div className="w-3 h-0.5 bg-primary animate-pulse" />
                     <span>Active flow</span>
@@ -565,6 +788,80 @@ export default function Home() {
           )}
         </div>
       </div>
+
+      {/* Edit Node Dialog */}
+      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+        <DialogContent className="sm:max-w-[525px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <IconEdit className="h-5 w-5" stroke={1.5} />
+              Edit Node
+            </DialogTitle>
+            <DialogDescription>
+              Modify the properties of this workflow node.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <label htmlFor="label" className="text-sm font-medium">
+                Node Label
+              </label>
+              <Input
+                id="label"
+                value={editForm.label}
+                onChange={(e) => setEditForm(prev => ({ ...prev, label: e.target.value }))}
+                placeholder="e.g., Data Processing"
+              />
+            </div>
+            <div className="grid gap-2">
+              <label htmlFor="description" className="text-sm font-medium">
+                Description
+              </label>
+              <Input
+                id="description"
+                value={editForm.description}
+                onChange={(e) => setEditForm(prev => ({ ...prev, description: e.target.value }))}
+                placeholder="e.g., Processes incoming data"
+              />
+            </div>
+            <div className="grid gap-2">
+              <label htmlFor="content" className="text-sm font-medium">
+                Content
+              </label>
+              <Textarea
+                id="content"
+                value={editForm.content}
+                onChange={(e) => setEditForm(prev => ({ ...prev, content: e.target.value }))}
+                placeholder="Detailed explanation of what this node does..."
+                rows={4}
+              />
+            </div>
+            <div className="grid gap-2">
+              <label htmlFor="footer" className="text-sm font-medium">
+                Footer
+              </label>
+              <Input
+                id="footer"
+                value={editForm.footer}
+                onChange={(e) => setEditForm(prev => ({ ...prev, footer: e.target.value }))}
+                placeholder="e.g., AI Model: GPT-4"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button 
+              variant="outline" 
+              onClick={() => setIsEditDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleSaveEdit}>
+              <IconEdit className="h-4 w-4 mr-1" stroke={1.5} />
+              Save Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
