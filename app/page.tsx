@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
+import type { Connection as FlowConnection, Edge as FlowEdge, EdgeChange, OnConnect } from '@xyflow/react';
 import { Canvas } from '@/components/ai-elements/canvas';
 import { Connection } from '@/components/ai-elements/connection';
 import { Controls } from '@/components/ai-elements/controls';
@@ -129,6 +130,12 @@ export default function Home() {
     footer: '',
   });
 
+  // Inline editing state
+  const [editingInline, setEditingInline] = useState<{
+    nodeId: string;
+    field: 'label' | 'description';
+  } | null>(null);
+
   const nodeTypes = {
     workflow: ({
       id,
@@ -157,11 +164,35 @@ export default function Home() {
         }
       };
 
+      const isEditingLabel = editingInline?.nodeId === id && editingInline?.field === 'label';
+      const isEditingDesc = editingInline?.nodeId === id && editingInline?.field === 'description';
+
       return (
         <Node handles={data.handles} className={getStatusColor()}>
           <NodeHeader>
             <div className="flex items-center justify-between w-full">
-              <NodeTitle>{data.label}</NodeTitle>
+              {isEditingLabel ? (
+                <Input
+                  autoFocus
+                  value={data.label}
+                  onChange={(e) => handleInlineEdit(id, 'label', e.target.value)}
+                  onBlur={() => setEditingInline(null)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === 'Escape') {
+                      setEditingInline(null);
+                    }
+                  }}
+                  className="h-7 text-sm font-semibold"
+                />
+              ) : (
+                <NodeTitle 
+                  className="cursor-text hover:bg-muted/50 px-1 -mx-1 rounded"
+                  onClick={() => setEditingInline({ nodeId: id, field: 'label' })}
+                  title="Click to edit"
+                >
+                  {data.label}
+                </NodeTitle>
+              )}
               {data.status && (
                 <Badge
                   variant={
@@ -179,7 +210,28 @@ export default function Home() {
                 </Badge>
               )}
             </div>
-            <NodeDescription>{data.description}</NodeDescription>
+            {isEditingDesc ? (
+              <Input
+                autoFocus
+                value={data.description}
+                onChange={(e) => handleInlineEdit(id, 'description', e.target.value)}
+                onBlur={() => setEditingInline(null)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === 'Escape') {
+                    setEditingInline(null);
+                  }
+                }}
+                className="h-6 text-xs"
+              />
+            ) : (
+              <NodeDescription
+                className="cursor-text hover:bg-muted/50 px-1 -mx-1 rounded"
+                onClick={() => setEditingInline({ nodeId: id, field: 'description' })}
+                title="Click to edit"
+              >
+                {data.description}
+              </NodeDescription>
+            )}
           </NodeHeader>
           <NodeContent>
             <p className="text-sm">{data.content}</p>
@@ -415,6 +467,59 @@ export default function Home() {
         content: '➕ Added new custom node to workflow',
       },
     ]);
+  };
+
+  // Manual edge creation
+  const onConnect: OnConnect = useCallback((connection: FlowConnection) => {
+    const newEdge: EdgeData = {
+      id: `edge_${connection.source}_${connection.target}_${Date.now()}`,
+      source: connection.source!,
+      target: connection.target!,
+      type: 'animated',
+    };
+    
+    setEdges(prev => [...prev, newEdge]);
+    
+    setChatHistory(prev => [
+      ...prev,
+      {
+        type: 'assistant',
+        content: '🔗 Connected nodes manually',
+      },
+    ]);
+  }, []);
+
+  // Edge deletion
+  const onEdgesChange = useCallback((changes: EdgeChange[]) => {
+    changes.forEach(change => {
+      if (change.type === 'remove') {
+        setEdges(prev => prev.filter(edge => edge.id !== change.id));
+        setChatHistory(prev => [
+          ...prev,
+          {
+            type: 'assistant',
+            content: '✂️ Removed connection',
+          },
+        ]);
+      }
+    });
+  }, []);
+
+  // Inline editing handlers
+  const handleInlineEdit = (nodeId: string, field: 'label' | 'description', value: string) => {
+    setNodes(prevNodes =>
+      prevNodes.map(node =>
+        node.id === nodeId
+          ? {
+              ...node,
+              data: {
+                ...node.data,
+                [field]: value,
+              },
+            }
+          : node
+      )
+    );
   };
 
   const executeAgent = async () => {
@@ -766,21 +871,32 @@ export default function Home() {
               nodesDraggable={true}
               panOnDrag={true}
               selectionOnDrag={false}
+              onConnect={onConnect}
+              onEdgesChange={onEdgesChange}
+              edgesReconnectable={true}
+              edgesFocusable={true}
             >
               <Controls />
               <Panel position="top-left">
-                <div className="bg-card border rounded-lg p-2 text-xs space-y-1 shadow-sm">
-                  <div className="font-semibold flex items-center gap-1">
+                <div className="bg-card border rounded-lg p-2 text-xs space-y-2 shadow-sm max-w-[200px]">
+                  <div className="font-semibold flex items-center gap-1 border-b pb-1">
                     <IconBolt className="h-3 w-3" stroke={1.5} />
-                    Legend
+                    Quick Guide
                   </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-0.5 bg-primary animate-pulse" />
-                    <span>Active flow</span>
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-0.5 bg-primary animate-pulse" />
+                      <span>Active flow</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-0.5 bg-muted-foreground" />
+                      <span>Conditional</span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-0.5 bg-muted-foreground" />
-                    <span>Conditional</span>
+                  <div className="border-t pt-2 space-y-1 text-[10px] text-muted-foreground">
+                    <div>• Click text to edit</div>
+                    <div>• Drag from circles to connect</div>
+                    <div>• Select edge & press Del to remove</div>
                   </div>
                 </div>
               </Panel>
