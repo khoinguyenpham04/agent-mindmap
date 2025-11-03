@@ -1,7 +1,9 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import type { Connection as FlowConnection, Edge as FlowEdge, EdgeChange, OnConnect } from '@xyflow/react';
+import type { Connection as FlowConnection, Edge as FlowEdge, EdgeChange, NodeChange, OnConnect } from '@xyflow/react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Canvas } from '@/components/ai-elements/canvas';
 import { Connection } from '@/components/ai-elements/connection';
 import { Controls } from '@/components/ai-elements/controls';
@@ -55,6 +57,13 @@ import {
   IconBolt,
   IconEdit,
   IconPlus,
+  IconClock,
+  IconCheck,
+  IconAlertCircle,
+  IconChevronDown,
+  IconChevronUp,
+  IconFileText,
+  IconX,
 } from '@tabler/icons-react';
 
 interface NodeData {
@@ -135,6 +144,12 @@ export default function Home() {
     nodeId: string;
     field: 'label' | 'description';
   } | null>(null);
+
+  // Execution panel state
+  const [showExecutionPanel, setShowExecutionPanel] = useState(true);
+  const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set());
+  const [showReport, setShowReport] = useState(false);
+  const [executionReport, setExecutionReport] = useState<string>('');
 
   const nodeTypes = {
     workflow: ({
@@ -489,6 +504,27 @@ export default function Home() {
     ]);
   }, []);
 
+  // Node position updates when dragging
+  const onNodesChange = useCallback((changes: NodeChange[]) => {
+    setNodes(prevNodes => {
+      const updatedNodes = [...prevNodes];
+      
+      changes.forEach(change => {
+        if (change.type === 'position' && change.position) {
+          const nodeIndex = updatedNodes.findIndex(n => n.id === change.id);
+          if (nodeIndex !== -1) {
+            updatedNodes[nodeIndex] = {
+              ...updatedNodes[nodeIndex],
+              position: change.position,
+            };
+          }
+        }
+      });
+      
+      return updatedNodes;
+    });
+  }, []);
+
   // Edge deletion
   const onEdgesChange = useCallback((changes: EdgeChange[]) => {
     changes.forEach(change => {
@@ -520,6 +556,94 @@ export default function Home() {
           : node
       )
     );
+  };
+
+  // Generate markdown report from execution state
+  const generateExecutionReport = (state: ExecutionState, input: string): string => {
+    const timestamp = new Date().toLocaleString();
+    const duration = state.steps.length > 0 
+      ? ((state.steps[state.steps.length - 1]?.timestamp || 0) - (state.steps[0]?.timestamp || 0)) / 1000
+      : 0;
+
+    let report = `# 🤖 Agent Execution Report\n\n`;
+    report += `**Execution ID:** \`${state.executionId}\`  \n`;
+    report += `**Date:** ${timestamp}  \n`;
+    report += `**Status:** ${state.status === 'completed' ? '✅ Completed' : state.status === 'error' ? '❌ Error' : '⏳ Running'}  \n`;
+    report += `**Duration:** ${duration.toFixed(2)}s  \n`;
+    report += `**Total Steps:** ${state.steps.length}  \n\n`;
+
+    report += `---\n\n`;
+
+    report += `## 📝 Input\n\n`;
+    report += `\`\`\`\n${input}\n\`\`\`\n\n`;
+
+    report += `---\n\n`;
+
+    report += `## 🎯 Final Output\n\n`;
+    if (state.finalOutput) {
+      report += `${state.finalOutput}\n\n`;
+    } else {
+      report += `*No final output available*\n\n`;
+    }
+
+    report += `---\n\n`;
+
+    report += `## 📊 Execution Timeline\n\n`;
+    
+    state.steps.forEach((step, index) => {
+      const statusEmoji = step.status === 'completed' ? '✅' : 
+                         step.status === 'running' ? '⏳' : 
+                         step.status === 'error' ? '❌' : '⏸️';
+      
+      report += `### ${index + 1}. ${statusEmoji} ${step.nodeName}\n\n`;
+      report += `**Status:** ${step.status}  \n`;
+      
+      if (step.input) {
+        report += `\n**Input:**\n\`\`\`\n${step.input.substring(0, 300)}${step.input.length > 300 ? '...' : ''}\n\`\`\`\n\n`;
+      }
+      
+      if (step.output) {
+        report += `**Output:**\n\n${step.output}\n\n`;
+      }
+      
+      if (step.toolCalls && step.toolCalls.length > 0) {
+        report += `**🔧 Tools Used:**\n\n`;
+        step.toolCalls.forEach(tool => {
+          report += `- **${tool.name}**\n`;
+          if (tool.arguments) {
+            report += `  - Arguments: \`${JSON.stringify(tool.arguments)}\`\n`;
+          }
+          if (tool.result) {
+            report += `  - Result: ${JSON.stringify(tool.result).substring(0, 150)}...\n`;
+          }
+        });
+        report += `\n`;
+      }
+      
+      if (step.error) {
+        report += `**⚠️ Error:** ${step.error}\n\n`;
+      }
+      
+      report += `---\n\n`;
+    });
+
+    report += `## 📈 Summary\n\n`;
+    const completedSteps = state.steps.filter(s => s.status === 'completed').length;
+    const errorSteps = state.steps.filter(s => s.status === 'error').length;
+    
+    report += `- **Completed Steps:** ${completedSteps} / ${state.steps.length}\n`;
+    report += `- **Failed Steps:** ${errorSteps}\n`;
+    report += `- **Success Rate:** ${((completedSteps / state.steps.length) * 100).toFixed(1)}%\n\n`;
+
+    const totalToolCalls = state.steps.reduce((acc, step) => acc + (step.toolCalls?.length || 0), 0);
+    if (totalToolCalls > 0) {
+      report += `- **Total Tool Calls:** ${totalToolCalls}\n`;
+    }
+
+    report += `\n---\n\n`;
+    report += `*Generated by Mindra AI Agent Platform*\n`;
+
+    return report;
   };
 
   const executeAgent = async () => {
@@ -583,12 +707,18 @@ export default function Home() {
 
             if (data.done) {
               setIsExecuting(false);
+              
+              // Generate execution report
+              const report = generateExecutionReport(data, executionInput);
+              setExecutionReport(report);
+              setShowReport(true);
+              
               if (data.finalOutput) {
                 setChatHistory(prev => [
                   ...prev,
                   {
                     type: 'assistant',
-                    content: `✅ Agent execution completed!\n\n${data.finalOutput}`,
+                    content: `✅ Agent execution completed! Click "View Report" to see the full execution report.`,
                   },
                 ]);
               }
@@ -674,50 +804,120 @@ export default function Home() {
             </>
           )}
 
-          {/* Execution Steps Display */}
+          {/* Execution Steps Display - Enhanced */}
           {executionState && executionState.steps.length > 0 && (
-            <Card className="p-4">
-              <h3 className="font-semibold mb-3 flex items-center gap-2">
-                <IconGitBranch className="h-4 w-4" stroke={1.5} />
-                <span>Execution Steps</span>
-                {isExecuting && <Loader />}
-              </h3>
-              <ScrollArea className="h-[200px]">
+            <Card className="p-4 border-primary/20">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-semibold flex items-center gap-2">
+                  <IconGitBranch className="h-4 w-4" stroke={1.5} />
+                  <span>Execution Timeline</span>
+                  {isExecuting && <Loader />}
+                </h3>
+                <div className="text-xs text-muted-foreground">
+                  {executionState.steps.filter(s => s.status === 'completed').length} / {executionState.steps.length} completed
+                </div>
+              </div>
+              <ScrollArea className="h-[250px]">
                 <div className="space-y-2">
-                  {executionState.steps.map((step) => (
-                    <div
-                      key={step.id}
-                      className="border rounded-lg p-3 text-sm space-y-1"
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="font-medium">{step.nodeName}</span>
-                        <Badge
-                          variant={
-                            step.status === 'completed'
-                              ? 'default'
-                              : step.status === 'running'
-                              ? 'secondary'
-                              : step.status === 'error'
-                              ? 'destructive'
-                              : 'outline'
-                          }
+                  {executionState.steps.map((step, index) => {
+                    const isExpanded = expandedSteps.has(step.id);
+                    const stepIcon = step.status === 'completed' ? IconCheck : 
+                                    step.status === 'running' ? IconClock : 
+                                    step.status === 'error' ? IconAlertCircle : IconClock;
+                    const StepIcon = stepIcon;
+                    
+                    return (
+                      <div
+                        key={step.id}
+                        className={`border rounded-lg overflow-hidden transition-all ${
+                          step.status === 'running' ? 'border-blue-500 bg-blue-50/50 dark:bg-blue-950/20' :
+                          step.status === 'completed' ? 'border-green-500/30 bg-green-50/30 dark:bg-green-950/10' :
+                          step.status === 'error' ? 'border-red-500/30 bg-red-50/30 dark:bg-red-950/10' :
+                          'border-border'
+                        }`}
+                      >
+                        <div 
+                          className="p-3 cursor-pointer hover:bg-muted/50"
+                          onClick={() => {
+                            const newExpanded = new Set(expandedSteps);
+                            if (isExpanded) {
+                              newExpanded.delete(step.id);
+                            } else {
+                              newExpanded.add(step.id);
+                            }
+                            setExpandedSteps(newExpanded);
+                          }}
                         >
-                          {step.status}
-                        </Badge>
-                      </div>
-                      {step.output && (
-                        <p className="text-muted-foreground text-xs">
-                          {step.output.substring(0, 150)}
-                          {step.output.length > 150 ? '...' : ''}
-                        </p>
-                      )}
-                      {step.toolCalls && step.toolCalls.length > 0 && (
-                        <div className="text-xs text-blue-600 dark:text-blue-400">
-                          🔧 Used tools: {step.toolCalls.map(t => t.name).join(', ')}
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <div className="flex items-center justify-center w-6 h-6 rounded-full bg-muted">
+                                <span className="text-xs font-medium">{index + 1}</span>
+                              </div>
+                              <StepIcon className={`h-4 w-4 ${
+                                step.status === 'running' ? 'text-blue-500' :
+                                step.status === 'completed' ? 'text-green-500' :
+                                step.status === 'error' ? 'text-red-500' :
+                                'text-muted-foreground'
+                              }`} stroke={1.5} />
+                              <span className="font-medium text-sm">{step.nodeName}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Badge
+                                variant={
+                                  step.status === 'completed' ? 'default' :
+                                  step.status === 'running' ? 'secondary' :
+                                  step.status === 'error' ? 'destructive' : 'outline'
+                                }
+                                className="text-[10px]"
+                              >
+                                {step.status}
+                              </Badge>
+                              {isExpanded ? <IconChevronUp className="h-3 w-3" /> : <IconChevronDown className="h-3 w-3" />}
+                            </div>
+                          </div>
                         </div>
-                      )}
-                    </div>
-                  ))}
+                        
+                        {isExpanded && (
+                          <div className="px-3 pb-3 space-y-2 border-t pt-2">
+                            {step.input && (
+                              <div className="text-xs">
+                                <div className="font-medium text-muted-foreground mb-1">Input:</div>
+                                <div className="bg-muted/50 p-2 rounded text-xs">
+                                  {step.input.substring(0, 200)}
+                                  {step.input.length > 200 ? '...' : ''}
+                                </div>
+                              </div>
+                            )}
+                            {step.output && (
+                              <div className="text-xs">
+                                <div className="font-medium text-muted-foreground mb-1">Output:</div>
+                                <div className="bg-muted/50 p-2 rounded text-xs">
+                                  {step.output}
+                                </div>
+                              </div>
+                            )}
+                            {step.toolCalls && step.toolCalls.length > 0 && (
+                              <div className="text-xs">
+                                <div className="font-medium text-muted-foreground mb-1">Tools Used:</div>
+                                {step.toolCalls.map((tool, i) => (
+                                  <div key={i} className="bg-blue-50 dark:bg-blue-950/20 p-2 rounded mb-1">
+                                    <div className="font-medium text-blue-600 dark:text-blue-400">
+                                      🔧 {tool.name}
+                                    </div>
+                                    {tool.result && (
+                                      <div className="text-[10px] mt-1 text-muted-foreground">
+                                        {JSON.stringify(tool.result).substring(0, 150)}...
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </ScrollArea>
             </Card>
@@ -869,9 +1069,10 @@ export default function Home() {
               nodeTypes={nodeTypes}
               connectionLineComponent={Connection}
               nodesDraggable={true}
-              panOnDrag={true}
+              panOnDrag={[1, 2]}
               selectionOnDrag={false}
               onConnect={onConnect}
+              onNodesChange={onNodesChange}
               onEdgesChange={onEdgesChange}
               edgesReconnectable={true}
               edgesFocusable={true}
@@ -894,12 +1095,75 @@ export default function Home() {
                     </div>
                   </div>
                   <div className="border-t pt-2 space-y-1 text-[10px] text-muted-foreground">
+                    <div>• Drag nodes to move</div>
                     <div>• Click text to edit</div>
                     <div>• Drag from circles to connect</div>
-                    <div>• Select edge & press Del to remove</div>
+                    <div>• Select edge & Del to remove</div>
                   </div>
                 </div>
               </Panel>
+              
+              {/* Execution Status Overlay */}
+              {isExecuting && executionState && (
+                <Panel position="bottom-right">
+                  <div className="bg-card border-2 border-primary rounded-lg p-3 shadow-lg max-w-[280px]">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Loader />
+                      <span className="font-semibold text-sm">Agent Executing</span>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-muted-foreground">Progress</span>
+                        <span className="font-medium">
+                          {executionState.steps.filter(s => s.status === 'completed').length} / {executionState.steps.length}
+                        </span>
+                      </div>
+                      <div className="w-full bg-muted rounded-full h-1.5">
+                        <div 
+                          className="bg-primary h-1.5 rounded-full transition-all"
+                          style={{ 
+                            width: `${(executionState.steps.filter(s => s.status === 'completed').length / executionState.steps.length) * 100}%` 
+                          }}
+                        />
+                      </div>
+                      {executionState.currentNode && (
+                        <div className="text-xs pt-1 border-t">
+                          <div className="text-muted-foreground mb-1">Current:</div>
+                          <div className="flex items-center gap-1 text-blue-600 dark:text-blue-400 font-medium">
+                            <IconClock className="h-3 w-3" stroke={1.5} />
+                            {nodes.find(n => n.id === executionState.currentNode)?.data.label || 'Processing...'}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </Panel>
+              )}
+              
+              {/* Execution Complete Overlay */}
+              {executionState && !isExecuting && executionState.status === 'completed' && (
+                <Panel position="bottom-right">
+                  <div className="bg-card border-2 border-green-500 rounded-lg p-3 shadow-lg max-w-[280px]">
+                    <div className="flex items-center gap-2 mb-2">
+                      <IconCheck className="h-5 w-5 text-green-500" stroke={1.5} />
+                      <div>
+                        <div className="font-semibold text-sm">Execution Complete</div>
+                        <div className="text-xs text-muted-foreground">
+                          {executionState.steps.length} steps completed successfully
+                        </div>
+                      </div>
+                    </div>
+                    <Button 
+                      size="sm" 
+                      className="w-full mt-2"
+                      onClick={() => setShowReport(true)}
+                    >
+                      <IconFileText className="h-4 w-4 mr-1" stroke={1.5} />
+                      View Report
+                    </Button>
+                  </div>
+                </Panel>
+              )}
             </Canvas>
           )}
         </div>
@@ -974,6 +1238,53 @@ export default function Home() {
             <Button onClick={handleSaveEdit}>
               <IconEdit className="h-4 w-4 mr-1" stroke={1.5} />
               Save Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Execution Report Modal */}
+      <Dialog open={showReport} onOpenChange={setShowReport}>
+        <DialogContent className="sm:max-w-[900px] max-h-[85vh]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <IconFileText className="h-5 w-5" stroke={1.5} />
+                Execution Report
+              </div>
+              <Button 
+                variant="ghost" 
+                size="sm"
+                onClick={() => {
+                  navigator.clipboard.writeText(executionReport);
+                  setChatHistory(prev => [
+                    ...prev,
+                    {
+                      type: 'assistant',
+                      content: '📋 Report copied to clipboard!',
+                    },
+                  ]);
+                }}
+              >
+                <IconDownload className="h-4 w-4 mr-1" stroke={1.5} />
+                Copy Markdown
+              </Button>
+            </DialogTitle>
+            <DialogDescription>
+              Comprehensive execution report with all steps, outputs, and tool usage
+            </DialogDescription>
+          </DialogHeader>
+          <ScrollArea className="h-[calc(85vh-140px)] pr-4">
+            <div className="prose prose-sm dark:prose-invert max-w-none">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {executionReport}
+              </ReactMarkdown>
+            </div>
+          </ScrollArea>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowReport(false)}>
+              <IconX className="h-4 w-4 mr-1" stroke={1.5} />
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>
